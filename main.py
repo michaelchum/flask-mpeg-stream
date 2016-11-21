@@ -1,8 +1,6 @@
 from flask import Flask, render_template, Response
 from camera import VideoCamera
-from zero_server import Server
 import zmq
-import cv2
 from threading import Thread
 import numpy as np
 from time import sleep
@@ -26,10 +24,10 @@ def zero_server():
         #  Wait for next request from client
         message = socket.recv()
         print("Updated global")
-        frame = np.fromstring(message, dtype=np.uint8)
-        global_img = cv2.imdecode(frame, 1)
+        global_img = np.fromstring(message, dtype=np.uint8)
+        # global_img = cv2.imdecode(frame, 1)
         # cv2.imwrite("hello.jpg", global_img)
-        ret, global_img = cv2.imencode('.jpg', global_img)
+        # ret, global_img = cv2.imencode('.jpg', global_img)
         socket.send(b"Updated")
 
 def gen_img():
