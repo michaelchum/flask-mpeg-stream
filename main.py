@@ -1,37 +1,83 @@
-#!/usr/bin/env python
-#
-# Project: Video Streaming with Flask
-# Author: Log0 <im [dot] ckieric [at] gmail [dot] com>
-# Date: 2014/12/21
-# Website: http://www.chioka.in/
-# Description:
-# Modified to support streaming out with webcams, and not just raw JPEGs.
-# Most of the code credits to Miguel Grinberg, except that I made a small tweak. Thanks!
-# Credits: http://blog.miguelgrinberg.com/post/video-streaming-with-flask
-#
-# Usage:
-# 1. Install Python dependencies: cv2, flask. (wish that pip install works like a charm)
-# 2. Run "python main.py".
-# 3. Navigate the browser to the local webpage.
 from flask import Flask, render_template, Response
 from camera import VideoCamera
+from zero_server import Server
+import zmq
+import cv2
+from threading import Thread
+import numpy as np
+from time import sleep
+
+server_started = False
+global_img = None
+
+def init_server():
+    global server_started
+    if not server_started:
+        server_started = True
+        t = Thread(target=zero_server)
+        t.start()
+
+def zero_server():
+    global global_img
+    context = zmq.Context()
+    socket = context.socket(zmq.REP)
+    socket.bind("ipc:///zero/0")
+    while True:
+        #  Wait for next request from client
+        message = socket.recv()
+        print("Updated global")
+        frame = np.fromstring(message, dtype=np.uint8)
+        global_img = cv2.imdecode(frame, 1)
+        # cv2.imwrite("hello.jpg", global_img)
+        ret, global_img = cv2.imencode('.jpg', global_img)
+        socket.send(b"Updated")
+
+def gen_img():
+    global global_img
+    while global_img is not None:
+        sleep(0.04)
+        try:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + global_img.tobytes() + b'\r\n\r\n')
+        except:
+            print("Disconnected")
+            break
 
 app = Flask(__name__)
 
 @app.route('/')
 def index():
+    init_server()
     return render_template('index.html')
 
-def gen(camera):
-    while True:
-        frame = camera.get_frame()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+@app.route('/init')
+def init():
+    init_server()
+    return 'Init'
+
+# def gen(camera):
+#     while True:
+#         frame = camera.get_frame()
+#         yield (b'--frame\r\n'
+#                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(gen(VideoCamera()),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    init_server()
+    global global_img
+    # return Response(gen(VideoCamera()),
+    #                 mimetype='multipart/x-mixed-replace; boundary=frame')
+    if global_img is not None:
+        try:
+            return Response(gen_img(), mimetype='multipart/x-mixed-replace; boundary=frame')
+        except:
+            print("Disconnected")
+    return "No image"
+
+@app.route('/<path:dummy>')
+def fallback(dummy):
+    init_server()
+    return 'This one catches everything else'
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', debug=True, port=5000, threaded=True)
